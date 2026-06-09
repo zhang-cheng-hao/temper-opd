@@ -1,0 +1,69 @@
+diff --git a/examples/quickstart.py b/examples/quickstart.py
+index b0e7028..bd60daa 100644
+--- a/examples/quickstart.py
++++ b/examples/quickstart.py
+@@ -21,7 +21,7 @@ tokenizer = AutoTokenizer.from_pretrained(cfg.student_model, trust_remote_code=T
+ if tokenizer.pad_token is None:
+     tokenizer.pad_token = tokenizer.eos_token
+ 
+-student = AutoModelForCausalLM.from_pretrained(cfg.student_model, dtype="auto", trust_remote_code=True)
++student = AutoModelForCausalLM.from_pretrained(cfg.student_model, torch_dtype="auto", trust_remote_code=True)
+ teacher = create_teacher(cfg, student_tokenizer=tokenizer)
+ dataset = prepare_dataset(cfg, tokenizer)  # tokenize + prompt/response 分离
+ 
+diff --git a/flashopd/teacher.py b/flashopd/teacher.py
+index 38bf72a..4bfa022 100644
+--- a/flashopd/teacher.py
++++ b/flashopd/teacher.py
+@@ -351,7 +351,7 @@ def create_teacher(
+ 
+     teacher = AutoModelForCausalLM.from_pretrained(
+         cfg.teacher_model,
+-        dtype=torch.bfloat16 if cfg.bf16 else torch.float16,
++        torch_dtype=torch.bfloat16 if cfg.bf16 else torch.float16,
+         device_map=device_map,
+         trust_remote_code=True,
+     )
+diff --git a/flashopd/train.py b/flashopd/train.py
+index d65bf0e..3519d72 100644
+--- a/flashopd/train.py
++++ b/flashopd/train.py
+@@ -218,7 +218,7 @@ def run_training(cfg: OPDConfig):
+     dtype = torch.bfloat16 if cfg.bf16 else torch.float16
+     student = AutoModelForCausalLM.from_pretrained(
+         cfg.student_model,
+-        dtype=dtype,
++        torch_dtype=dtype,
+         trust_remote_code=True,
+     )
+ 
+diff --git a/flashopd/trainer.py b/flashopd/trainer.py
+index b5027d6..038188e 100644
+--- a/flashopd/trainer.py
++++ b/flashopd/trainer.py
+@@ -3,6 +3,7 @@ from __future__ import annotations
+ 
+ import os
+ import time
++import inspect
+ from typing import Dict, Optional
+ 
+ import torch
+@@ -59,7 +60,17 @@ class OPDTrainer(Trainer):
+                         f" ({opd_config.eval_split_ratio:.0%})"
+                     )
+ 
++        processing_class = kwargs.get("processing_class")
++        trainer_params = inspect.signature(Trainer.__init__).parameters
++        if processing_class is not None and "processing_class" not in trainer_params:
++            kwargs.pop("processing_class")
++            if "tokenizer" in trainer_params and "tokenizer" not in kwargs:
++                kwargs["tokenizer"] = processing_class
++
+         super().__init__(**kwargs)
++        if not hasattr(self, "processing_class") or self.processing_class is None:
++            self.processing_class = processing_class or getattr(self, "tokenizer", None)
++
+         self.opd_cfg = opd_config
+         self.teacher = teacher
+         self.balancer = LossBalancer(

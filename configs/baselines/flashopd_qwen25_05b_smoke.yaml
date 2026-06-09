@@ -1,0 +1,49 @@
+# FlashOPD smoke config.
+# 目的：验证 baseline 代码、数据流、student rollout、teacher scoring、loss/backward 都能跑通。
+# 这不是正式实验结果；正式 OPD baseline 需要换成论文设置的 student/teacher/data。
+
+student_model: "/mmu_mllm_hdd/zhangchenghao05/models/Qwen2.5-0.5B"
+teacher_model: "/mmu_mllm_hdd/zhangchenghao05/models/Qwen2.5-0.5B"
+
+ce_coef: 1.0
+kl_coef: 0.1
+loss_balance: "fixed"
+ema_decay: 0.99
+
+kl_type: "reverse"
+temperature: 1.0
+kl_clip_min: 0.0
+kl_clip_max: 2.0
+kl_top_k: 16
+
+max_new_tokens: 8
+rollout_top_k: 0
+rollout_top_p: 1.0
+rollout_temperature: 1.0
+disable_after_ratio: 1.0
+
+teacher_backend: "local"
+
+learning_rate: 5.0e-6
+num_epochs: 1
+per_device_batch_size: 1
+gradient_accumulation_steps: 1
+warmup_ratio: 0.0
+lr_scheduler: "constant"
+weight_decay: 0.0
+bf16: true
+deepspeed:
+
+output_dir: "./runs/flashopd_qwen25_05b_smoke"
+save_steps: 1000
+logging_steps: 1
+save_total_limit: 1
+
+eval_strategy: "no"
+eval_split_ratio: 0.0
+
+data_path: "baselines/flash-opd/data/demo.jsonl"
+max_seq_length: 256
+cache_dir: "./runs/cache"
+
+use_lora: false
