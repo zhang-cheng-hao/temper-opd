@@ -336,6 +336,34 @@ setsid env \
 `global_step_20/actor` 下已有 8 个 rank 的 `model_world_size_8_rank_*.pt`、
 `optim_world_size_8_rank_*.pt` 和 `extra_state_world_size_8_rank_*.pt`，说明保存链路正常。
 
+### Runtime Context
+
+这里说的“跑一轮 OPD 大约 10 小时”，特指当前 THUNLP OPD 默认复现配置下的一次
+`total_epochs=1` 训练：
+
+| 项 | 当前值 |
+|---|---|
+| 机器 | 8x A800 |
+| train data | DAPO-Math-17k，原始 17,917 rows，运行时过滤后约 17,909 samples |
+| effective train steps | 279 steps |
+| train batch size | 64 |
+| rollout | 每个 prompt 采样 `n=4` responses |
+| max response length | 7168 |
+| OPD loss | `top_k=16`，`top_k_strategy=only_stu`，`reward_weight_mode=student_p` |
+| validation | 训练中 `trainer.test_freq=-1`，不跑内置 eval |
+| checkpoint | `save_freq=20` |
+
+按当前正式 run 的实测速度，step 21/22 附近约 `127s/step`。因此：
+
+```text
+279 steps * 127s/step = 35,433s ~= 9.8h
+```
+
+加上启动、vLLM/Ray 初始化、checkpoint 保存和少量波动，完整训练一轮按约 10 小时预算。
+这个估算不包含环境安装、模型/数据下载、前期失败重试，也不包含训练完成后的独立评测。
+如果改 `max_response_length`、rollout `n`、batch size、模型大小、teacher 配置或开启训练中 eval，
+耗时会明显变化。
+
 ## Known Pitfalls
 
 | Pitfall | Action |
