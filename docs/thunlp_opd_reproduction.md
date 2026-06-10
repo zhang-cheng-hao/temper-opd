@@ -347,7 +347,9 @@ setsid env \
 | train data | DAPO-Math-17k，原始 17,917 rows，运行时过滤后约 17,909 samples |
 | effective train steps | 279 steps |
 | train batch size | 64 |
+| prompt samples used by optimizer | `279 * 64 = 17,856` |
 | rollout | 每个 prompt 采样 `n=4` responses |
+| generated response trajectories | `17,856 * 4 = 71,424` |
 | max response length | 7168 |
 | OPD loss | `top_k=16`，`top_k_strategy=only_stu`，`reward_weight_mode=student_p` |
 | validation | 训练中 `trainer.test_freq=-1`，不跑内置 eval |
@@ -363,6 +365,10 @@ setsid env \
 这个估算不包含环境安装、模型/数据下载、前期失败重试，也不包含训练完成后的独立评测。
 如果改 `max_response_length`、rollout `n`、batch size、模型大小、teacher 配置或开启训练中 eval，
 耗时会明显变化。
+
+注意这里的样本数按进入优化器的完整 batch 计算。原始 parquet 有 17,917 rows，运行时过滤后约
+17,909 samples；当前 `279` 个完整 batch 实际覆盖 17,856 个 prompt，剩余少量样本不进入这一轮
+完整 batch。若按 rollout 后的 response/trajectory 计数，则是一轮约 71,424 条。
 
 ## Known Pitfalls
 
