@@ -27,8 +27,9 @@ configs/env/temper_opd_local_validation.yml
 创建方式：
 
 ```bash
-conda env create -f configs/env/temper_opd_local_validation.yml
-conda activate temper-opd-local-validation
+conda env create -p /mmu_mllm_hdd/zhangchenghao05/envs/temper-opd-local-validation \
+  -f configs/env/temper_opd_local_validation.yml
+conda activate /mmu_mllm_hdd/zhangchenghao05/envs/temper-opd-local-validation
 ```
 
 设计原则：这个环境用于本机 lightweight validation 和 FlashOPD 12-step 路径检查，不试图同时满足
@@ -85,11 +86,11 @@ runs/opd_baseline_smoke_<RUN_ID>/smoke.log
 
 | 环境 | 用途 | 依据 |
 |---|---|---|
-| `temper-opd-local-validation` | 本机验证代码路径和 FlashOPD 小步入口 | `configs/env/temper_opd_local_validation.yml` |
-| `opd-thunlp` | 8 卡复现 vanilla OPD | THUNLP OPD/verl/ray/vllm 实际依赖 |
-| `ta-opd` | 8 卡复现 TA-OPD | `baselines/ta-opd/requirements.txt` 和 `slime_ta_opd` 说明 |
-| `opsd` | 8 卡复现 OPSD | `baselines/opsd/environment.yml` |
-| `rpi-dev` | 我们自己的方法开发 | 在最终选定底座后再锁 |
+| `/mmu_mllm_hdd/zhangchenghao05/envs/temper-opd-local-validation` | 本机验证代码路径和 FlashOPD 小步入口 | `configs/env/temper_opd_local_validation.yml` |
+| `/mmu_mllm_hdd/zhangchenghao05/envs/opd-thunlp` | 8 卡复现 vanilla OPD | THUNLP OPD/verl/ray/vllm 实际依赖 |
+| `/mmu_mllm_hdd/zhangchenghao05/envs/ta-opd` | 8 卡复现 TA-OPD | `baselines/ta-opd/requirements.txt` 和 `slime_ta_opd` 说明 |
+| `/mmu_mllm_hdd/zhangchenghao05/envs/opsd` | 8 卡复现 OPSD | `baselines/opsd/environment.yml` |
+| `/mmu_mllm_hdd/zhangchenghao05/envs/rpi-dev` | 我们自己的方法开发 | 在最终选定底座后再锁 |
 
 不建议一个环境装所有 baseline。冲突来自 `torch`/`transformers`/`deepspeed`/`vllm`/`ray`
 这些训练栈的强版本耦合，尤其是不同 repo 的 verl fork 和 CUDA 扩展依赖。

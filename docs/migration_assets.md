@@ -47,8 +47,10 @@
 2. 创建环境：
 
 ```bash
-conda env create -f configs/env/flashopd_smoke_environment.yml
-conda activate temper-opd-flashopd
+export OPD_ENV_ROOT=/mmu_mllm_hdd/zhangchenghao05/envs
+conda env create -p "${OPD_ENV_ROOT}/temper-opd-flashopd" \
+  -f configs/env/flashopd_smoke_environment.yml
+conda activate "${OPD_ENV_ROOT}/temper-opd-flashopd"
 ```
 
 或：
@@ -108,6 +110,7 @@ PYTHON_BIN=/path/to/python GPU=0 scripts/run_flashopd_constant_sweep.sh
 
 | 变量 | 默认/当前值 | 迁移时动作 |
 |---|---|---|
+| `OPD_ENV_ROOT` | `/mmu_mllm_hdd/zhangchenghao05/envs` | 所有 conda prefix 放在这里 |
 | `PYTHON_BIN` | 当前为 `/opt/duyong_ssd/envs/llama_factory/bin/python` | 新环境显式传入 |
 | `GPU` | smoke 用 `1` | 新机器按空闲卡设置 |
 | `ROOT_DIR` | 仓库根目录 | 通常无需设置 |

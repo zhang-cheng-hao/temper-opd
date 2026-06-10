@@ -21,6 +21,16 @@ check_path() {
   fi
 }
 
+check_optional_path() {
+  local name="$1"
+  local path="$2"
+  if [ -e "$path" ]; then
+    printf "%s\tPASS\t%s\n" "$name" "$path"
+  else
+    printf "%s\tWARN\t%s\n" "$name" "$path"
+  fi
+}
+
 check_cmd() {
   local name="$1"
   local cmd="$2"
@@ -42,6 +52,20 @@ check_path flash_opd "$ROOT_DIR/baselines/flash-opd"
 check_path thunlp_opd "${THUNLP_OPD_DIR:-$ROOT_DIR/baselines/thunlp-opd}"
 check_path ta_opd "${TA_OPD_DIR:-$ROOT_DIR/baselines/ta-opd}"
 check_path opsd "${OPSD_DIR:-$ROOT_DIR/baselines/opsd}"
+
+if [ -n "${OPD_ENV_ROOT:-}" ]; then
+  check_path opd_env_root "$OPD_ENV_ROOT"
+fi
+if [ -n "${THUNLP_CONDA_PREFIX:-}" ]; then
+  check_optional_path thunlp_conda_prefix "$THUNLP_CONDA_PREFIX"
+  check_optional_path thunlp_python "$THUNLP_CONDA_PREFIX/bin/python"
+fi
+if [ -n "${TA_OPD_CONDA_PREFIX:-}" ]; then
+  check_optional_path ta_opd_conda_prefix "$TA_OPD_CONDA_PREFIX"
+fi
+if [ -n "${OPSD_CONDA_PREFIX:-}" ]; then
+  check_optional_path opsd_conda_prefix "$OPSD_CONDA_PREFIX"
+fi
 
 if [ -n "${THUNLP_ACTOR_MODEL_PATH:-}" ]; then
   check_path thunlp_actor_model "$THUNLP_ACTOR_MODEL_PATH"
