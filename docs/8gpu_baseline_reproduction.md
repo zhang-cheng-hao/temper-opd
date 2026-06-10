@@ -76,9 +76,13 @@ pip install math-verify
 正式入口：
 
 ```bash
-cd "$THUNLP_OPD_DIR"
-bash on_policy_distillation.sh
+DRY_RUN=1 scripts/repro/run_thunlp_opd_8gpu.sh configs/reproduction/baseline_paths.env
+DRY_RUN=0 scripts/repro/run_thunlp_opd_8gpu.sh configs/reproduction/baseline_paths.env
 ```
+
+这个 wrapper 会应用 `patches/thunlp-opd-env-overrides.patch`，让官方脚本的模型、数据、
+输出目录、GPU 数、response 长度等关键项能通过环境变量覆盖；`DRY_RUN=1` 只检查并打印
+最终配置，不启动训练。
 
 必须改的内容：
 
