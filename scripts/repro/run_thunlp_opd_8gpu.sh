@@ -24,6 +24,99 @@ if [ -n "${THUNLP_CONDA_PREFIX:-}" ] && [ "${CONDA_PREFIX:-}" != "$THUNLP_CONDA_
   echo "WARN: current CONDA_PREFIX='${CONDA_PREFIX:-unset}', expected THUNLP_CONDA_PREFIX='$THUNLP_CONDA_PREFIX'" >&2
 fi
 
+prepend_env_path() {
+  local var_name="$1"
+  local path_value="$2"
+  local current_value="${!var_name:-}"
+  if [ -z "$path_value" ]; then
+    return
+  fi
+  case ":$current_value:" in
+    *":$path_value:"*) ;;
+    *) export "$var_name=$path_value${current_value:+:$current_value}" ;;
+  esac
+}
+
+python_probe="python"
+if [ -n "${THUNLP_CONDA_PREFIX:-}" ] && [ -x "$THUNLP_CONDA_PREFIX/bin/python" ]; then
+  python_probe="$THUNLP_CONDA_PREFIX/bin/python"
+fi
+cuda_compat_dir="${THUNLP_CUDA_COMPAT_DIR:-}"
+if [ -z "$cuda_compat_dir" ] && [ -n "${THUNLP_CONDA_PREFIX:-}" ]; then
+  default_cuda_compat="$THUNLP_CONDA_PREFIX/cuda-compat-12-8/usr/local/cuda-12.8/compat"
+  if [ -f "$default_cuda_compat/libcuda.so.1" ]; then
+    cuda_compat_dir="$default_cuda_compat"
+  fi
+fi
+if [ -n "$cuda_compat_dir" ]; then
+  if [ ! -f "$cuda_compat_dir/libcuda.so.1" ]; then
+    echo "THUNLP_CUDA_COMPAT_DIR is set but libcuda.so.1 is missing: $cuda_compat_dir" >&2
+    exit 1
+  fi
+  prepend_env_path LD_LIBRARY_PATH "$cuda_compat_dir"
+  echo "==> Added CUDA forward-compat driver path: $cuda_compat_dir"
+fi
+if [ -n "${THUNLP_CONDA_PREFIX:-}" ] && [ -d "$THUNLP_CONDA_PREFIX/lib" ]; then
+  prepend_env_path LIBRARY_PATH "$THUNLP_CONDA_PREFIX/lib"
+  prepend_env_path LD_LIBRARY_PATH "$THUNLP_CONDA_PREFIX/lib"
+fi
+curand_paths="$("$python_probe" - <<'PY' 2>/dev/null || true
+from pathlib import Path
+
+try:
+    import nvidia.curand
+except Exception:
+    raise SystemExit(0)
+
+root = Path(nvidia.curand.__file__).resolve().parent
+include = root / "include"
+lib = root / "lib"
+print(include if (include / "curand.h").exists() else "")
+print(lib if any(lib.glob("libcurand*")) else "")
+PY
+)"
+curand_include="$(printf '%s\n' "$curand_paths" | sed -n '1p')"
+curand_lib="$(printf '%s\n' "$curand_paths" | sed -n '2p')"
+if [ -n "$curand_include" ]; then
+  prepend_env_path CPATH "$curand_include"
+  prepend_env_path C_INCLUDE_PATH "$curand_include"
+  prepend_env_path CPLUS_INCLUDE_PATH "$curand_include"
+  echo "==> Added CUDA curand include path for JIT builds: $curand_include"
+fi
+if [ -n "$curand_lib" ]; then
+  prepend_env_path LIBRARY_PATH "$curand_lib"
+  prepend_env_path LD_LIBRARY_PATH "$curand_lib"
+  echo "==> Added CUDA curand library path for JIT builds: $curand_lib"
+fi
+cuda_runtime_paths="$("$python_probe" - <<'PY' 2>/dev/null || true
+from pathlib import Path
+
+try:
+    import nvidia.cuda_runtime
+except Exception:
+    raise SystemExit(0)
+
+root = Path(nvidia.cuda_runtime.__file__).resolve().parent
+include = root / "include"
+lib = root / "lib"
+print(include if (include / "cuda_runtime.h").exists() else "")
+print(lib if any(lib.glob("libcudart*")) else "")
+PY
+)"
+cuda_runtime_include="$(printf '%s\n' "$cuda_runtime_paths" | sed -n '1p')"
+cuda_runtime_lib="$(printf '%s\n' "$cuda_runtime_paths" | sed -n '2p')"
+if [ -n "$cuda_runtime_include" ]; then
+  prepend_env_path CPATH "$cuda_runtime_include"
+  prepend_env_path C_INCLUDE_PATH "$cuda_runtime_include"
+  prepend_env_path CPLUS_INCLUDE_PATH "$cuda_runtime_include"
+  echo "==> Added CUDA runtime include path for JIT builds: $cuda_runtime_include"
+fi
+if [ -n "$cuda_runtime_lib" ]; then
+  prepend_env_path LIBRARY_PATH "$cuda_runtime_lib"
+  prepend_env_path LD_LIBRARY_PATH "$cuda_runtime_lib"
+  echo "==> Added CUDA runtime library path for JIT builds: $cuda_runtime_lib"
+fi
+
 required=(
   THUNLP_ACTOR_MODEL_PATH
   THUNLP_REWARD_MODEL_PATH
@@ -40,11 +133,21 @@ done
 echo "==> THUNLP OPD dir: $THUNLP_OPD_DIR"
 cd "$THUNLP_OPD_DIR"
 
-if git apply --reverse --check "$PATCH_FILE" >/dev/null 2>&1; then
+if grep -Fq 'export ACTOR_MODEL_PATH=${ACTOR_MODEL_PATH:-' on_policy_distillation.sh \
+  && grep -Fq 'export PROJECT_PATH=${PROJECT_PATH:-' on_policy_distillation.sh; then
   echo "==> Env override patch already applied"
-else
+elif git apply --unidiff-zero --check "$PATCH_FILE" >/dev/null 2>&1; then
   echo "==> Applying env override patch"
-  git apply "$PATCH_FILE"
+  git apply --unidiff-zero "$PATCH_FILE"
+else
+  echo "Env override patch is neither applied nor cleanly applicable: $PATCH_FILE" >&2
+  exit 1
+fi
+
+if ! grep -Fq 'export ACTOR_MODEL_PATH=${ACTOR_MODEL_PATH:-' on_policy_distillation.sh \
+  || ! grep -Fq 'export PROJECT_PATH=${PROJECT_PATH:-' on_policy_distillation.sh; then
+  echo "Env override patch check failed after patch step." >&2
+  exit 1
 fi
 
 env_check_args=("$ROOT_DIR/scripts/repro/check_thunlp_env.py" --min-gpus "${N_GPUS_PER_NODE:-8}")

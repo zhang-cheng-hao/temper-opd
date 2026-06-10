@@ -13,6 +13,9 @@ FLASH_ATTN_VERSION="${FLASH_ATTN_VERSION:-2.8.1}"
 FLASH_ATTN_CUDA_ARCHS="${FLASH_ATTN_CUDA_ARCHS:-80}"
 FLASH_ATTN_MAX_JOBS="${FLASH_ATTN_MAX_JOBS:-4}"
 CUDA_NVCC_VERSION="${CUDA_NVCC_VERSION:-12.8.93}"
+INSTALL_CUDA_COMPAT="${INSTALL_CUDA_COMPAT:-auto}"
+CUDA_COMPAT_VERSION="${CUDA_COMPAT_VERSION:-12-8}"
+CUDA_COMPAT_PACKAGE_VERSION="${CUDA_COMPAT_PACKAGE_VERSION:-570.211.01-0ubuntu1}"
 
 if [ -f "$ENV_FILE" ]; then
   # shellcheck disable=SC1090
@@ -61,10 +64,51 @@ if [ "$INSTALL_THUNLP_DEPS" != "1" ]; then
   exit 0
 fi
 
+install_cuda_compat=0
+if [ "$INSTALL_CUDA_COMPAT" = "1" ]; then
+  install_cuda_compat=1
+elif [ "$INSTALL_CUDA_COMPAT" = "auto" ] && command -v nvidia-smi >/dev/null 2>&1; then
+  driver_cuda="$(nvidia-smi | sed -n 's/.*CUDA Version: \([0-9][0-9.]*\).*/\1/p' | head -n 1)"
+  if [ -n "$driver_cuda" ] && [ "$(printf '%s\n' "$driver_cuda" "12.8" | sort -V | head -n 1)" = "$driver_cuda" ] && [ "$driver_cuda" != "12.8" ]; then
+    install_cuda_compat=1
+  fi
+fi
+
+if [ "$install_cuda_compat" = "1" ]; then
+  compat_root="$THUNLP_CONDA_PREFIX/cuda-compat-${CUDA_COMPAT_VERSION}"
+  compat_lib="$compat_root/usr/local/cuda-${CUDA_COMPAT_VERSION/-/.}/compat"
+  if [ -f "$compat_lib/libcuda.so.1" ]; then
+    echo "==> CUDA compat already present: $compat_lib"
+  elif command -v apt-get >/dev/null 2>&1 && command -v dpkg-deb >/dev/null 2>&1; then
+    echo "==> Downloading CUDA compat package for old host driver"
+    compat_tmp="$THUNLP_CONDA_PREFIX/.cuda-compat-debs"
+    mkdir -p "$compat_tmp"
+    compat_pkg="cuda-compat-${CUDA_COMPAT_VERSION}"
+    if [ -n "$CUDA_COMPAT_PACKAGE_VERSION" ]; then
+      compat_pkg="${compat_pkg}=${CUDA_COMPAT_PACKAGE_VERSION}"
+    fi
+    (
+      cd "$compat_tmp"
+      apt-get download "$compat_pkg"
+    )
+    compat_deb="$(find "$compat_tmp" -maxdepth 1 -name "cuda-compat-${CUDA_COMPAT_VERSION}_*.deb" -printf '%T@ %p\n' | sort -nr | awk 'NR==1 {print $2}')"
+    if [ -z "$compat_deb" ]; then
+      echo "Failed to locate downloaded CUDA compat deb in $compat_tmp" >&2
+      exit 1
+    fi
+    rm -rf "$compat_root"
+    mkdir -p "$compat_root"
+    dpkg-deb -x "$compat_deb" "$compat_root"
+  else
+    echo "CUDA compat requested but apt-get/dpkg-deb is unavailable." >&2
+    exit 1
+  fi
+fi
+
 echo "==> Installing THUNLP OPD dependencies in: $THUNLP_CONDA_PREFIX"
 cd "$THUNLP_OPD_DIR/verl"
 USE_MEGATRON=0 bash scripts/install_vllm_sglang_mcore.sh
-python -m pip install math-verify jinja2
+python -m pip install math-verify jinja2 swanlab matplotlib
 python -m pip install -e .
 
 if [ "$FIX_THUNLP_PIP_CONFLICTS" = "1" ]; then

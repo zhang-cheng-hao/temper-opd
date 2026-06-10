@@ -1,0 +1,32 @@
+# Reference runtime pins for the THUNLP OPD reproduction environment.
+#
+# Use scripts/repro/bootstrap_thunlp_env.sh as the canonical installer. The
+# upstream THUNLP/verl installer pulls platform-specific CUDA/vLLM/flash-attn
+# dependencies, so this file records the core stack that was validated on the
+# 8xA800 shared filesystem rather than replacing the bootstrap script.
+name: temper-opd-thunlp
+channels:
+  - conda-forge
+  - nvidia
+  - defaults
+dependencies:
+  - python=3.12
+  - pip
+  - cuda-nvcc=12.8.93
+  - pip:
+      - torch==2.8.0
+      - vllm==0.11.0
+      - ray==2.55.1
+      - sglang==0.5.2
+      - flash-attn==2.8.1
+      - flashinfer-python==0.3.1
+      - transformers==4.56.1
+      - datasets==5.0.0
+      - pyarrow==24.0.0
+      - accelerate==1.13.0
+      - math-verify==0.8.0
+      - swanlab==0.8.1
+      - matplotlib==3.10.7
+      - nvidia-cuda-runtime-cu12==12.8.90
+      - nvidia-curand-cu12==10.3.9.90
+      - nvidia-cudnn-cu12==9.10.2.21
