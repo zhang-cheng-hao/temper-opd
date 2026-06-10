@@ -70,6 +70,34 @@ output_dir: runs/flashopd_qwen25_05b_smoke
 
 优先使用 `baselines/thunlp-opd`，这是最贴近 OPD 论文设置的实现。
 
+### 2.0 Stop-token / EOS 踩坑记录
+
+OPD 的 teacher/student 不能只看模型大小是否合适，还要看模型形态和终止 token 是否一致。
+一个已知失败模式是：base student 蒸 instruct/non-thinking teacher，top-k RKL 在 EOS 位置
+出现严重分歧，梯度把 student 的停止概率压低，随后 response length 暴涨、验证集崩掉、
+case 里无限重复。
+
+复现前先跑：
+
+```bash
+python scripts/repro/check_tokenizer_stop_tokens.py \
+  --student "$THUNLP_ACTOR_MODEL_PATH" \
+  --teacher "$THUNLP_REWARD_MODEL_PATH"
+```
+
+硬性记录：
+
+```text
+student/teacher 是否同为 base 或同为 instruct
+eos_token_id / pad_token_id
+chat_template 是否存在且一致
+<|endoftext|> / <|im_end|> / <|eot_id|> 等 stop token 编码
+训练中的平均生成长度、EOS rate、repetition rate
+```
+
+经验规则：base 蒸 base，instruct 蒸 instruct。若必须混用，需要在 loss 里显式做
+EOS mask/remap，并让所有 baseline 和 RPI 使用同一规则。
+
 官方脚本：
 
 ```bash

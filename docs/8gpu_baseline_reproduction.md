@@ -27,7 +27,37 @@ vim configs/reproduction/baseline_paths.env
 scripts/repro/check_8gpu_prereqs.sh configs/reproduction/baseline_paths.env
 ```
 
-3. 不要用一个 conda 环境跑所有 baseline。按下面顺序拆环境。
+3. 检查 teacher/student tokenizer 和 stop-token 对齐：
+
+```bash
+python scripts/repro/check_tokenizer_stop_tokens.py \
+  --student "$THUNLP_ACTOR_MODEL_PATH" \
+  --teacher "$THUNLP_REWARD_MODEL_PATH"
+```
+
+4. 不要用一个 conda 环境跑所有 baseline。按下面顺序拆环境。
+
+## OPD Stop-Token Pitfall
+
+OPD 复现前必须检查 teacher/student 的模型形态和终止 token。一个常见训崩模式是：
+student 在少数 step 后生成长度暴涨、验证集暴跌、case 里出现无限重复。分析 top-k RKL
+位置时，最大分歧常集中在 EOS/stop token：例如 student 倾向 `<|endoftext|>`，teacher
+倾向 `<|im_end|>`。如果 top-k RKL 只在 student top-k 上重归一化，teacher 在这些 token
+上的概率可能变成长尾噪音，梯度会错误压低 student 停止概率。
+
+复现策略：
+
+| 检查 | 要求 |
+|---|---|
+| model family | 优先 base 蒸 base、instruct 蒸 instruct，不混 chat template |
+| tokenizer | 记录 `eos_token_id`、`pad_token_id`、chat template、候选 stop token 编码 |
+| OPD loss | top-k RKL 近似要特别检查终止位；若做 EOS mask/remap 必须写入实验配置 |
+| runtime metrics | 必须 log 平均 response length、EOS rate、repetition rate、stop-token prob/overlap |
+| failure response | 长度暴涨或重复率上升时先停 run，检查 EOS 分歧，不要把结果当作方法失败 |
+
+如果必须混用 base/instruct 或不同 stop token 约定，至少预先实现并记录一种处理方式：
+采样到 EOS 时 mask loss，或在 logits/probability 层把 student/teacher 的 stop token 做显式
+映射。前者可能只延缓训崩；后者更适合长期复现，但需要在 baseline 和 RPI 中一致使用。
 
 ## Priority 1: THUNLP OPD / Vanilla OPD
 
@@ -59,6 +89,7 @@ bash on_policy_distillation.sh
 | train data | `TRAIN_DATASET` | 默认仓库内 `datasets/dapo-math-17k.parquet` 存在，可保留 |
 | test data | `TEST_DATA_DIR` | 默认仓库内 test data 存在，可保留 |
 | GPU count | `trainer.n_gpus_per_node=8` | 8 卡机器保留 |
+| stop token | actor/reward tokenizer | 用 `check_tokenizer_stop_tokens.py` 检查，不一致先修 |
 
 本机不建议直接跑 `on_policy_distillation.sh`：它硬编码 8 卡、长 response、`N_RESPONSES=4`，更适合 8 卡正式复现。
 
