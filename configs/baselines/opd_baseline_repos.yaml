@@ -1,0 +1,57 @@
+# External comparison-code manifest.
+# Baseline source trees are intentionally kept under baselines/ and ignored by
+# the parent repo; this file records how to restore them on a new machine.
+
+repos:
+  flash_opd:
+    path: baselines/flash-opd
+    url: https://github.com/china10s/flash-opd
+    commit: f2485a646dbddac997396cd36e36ee2e41d3e52e
+    role: lightweight OPD smoke harness
+    smoke: actual 12-step local FlashOPD run
+  thunlp_opd:
+    path: baselines/thunlp-opd
+    url: https://github.com/thunlp/OPD
+    commit: 83063cf62293b609bb6784d4a30ba2986a6d4a1e
+    role: vanilla OPD and OPD diagnostics reference implementation
+    smoke: shell syntax check only; full mini-run requires verl/ray/vllm setup
+  ta_opd:
+    path: baselines/ta-opd
+    url: https://github.com/wyy-code/TA-OPD
+    commit: ccdf21d2066466f3d616f63cd867cc49119c45e6
+    role: Teachability-Aware OPD loss-side/token-selection baseline
+    smoke: Python compile check for top-level TA-OPD tools/package
+  tropd:
+    path: baselines/tropd
+    url: https://github.com/Xingrun-Xing2/TrOPD
+    commit: b4bee6fb98166a9ca173ea201e77b397e2c01899
+    role: Trust Region OPD related baseline/mechanism comparator
+    smoke: README presence check only; upstream todo says training/eval code not released
+  opsd:
+    path: baselines/opsd
+    url: https://github.com/siyan-zhao/OPSD
+    commit: 7448751f307a9cdbcc1246dd1565a1a605b443df
+    role: teacher-free self-distillation baseline
+    smoke: Python compile check and shell syntax check
+  hybrid_policy_distillation:
+    path: baselines/hybrid-policy-distillation
+    url: https://github.com/zwhong714/Hybrid-Policy-Distillation
+    commit: 492b98c58dc66a8bc02cd360cf3a1d5aec0b5855
+    role: HPD / horizon-control-adjacent codebase; ESR search result points here as related code
+    smoke: HPD recipe Python compile check and shell syntax check
+  tinker_cookbook:
+    path: baselines/tinker-cookbook
+    url: https://github.com/thinking-machines-lab/tinker-cookbook
+    commit: 14374b5377e33f11d6dd057571037b11d4767322
+    role: practical OPD workflow reference
+    smoke: Python compile check for package
+
+no_official_code_found:
+  trb:
+    paper: Trust-Region Behavior Blending for On-Policy Distillation
+    arxiv: https://arxiv.org/abs/2605.31159
+    note: Search found the paper and references, but no official training-code repository.
+  popd_topd:
+    paper: Are Full Rollouts Necessary for On-Policy Distillation?
+    arxiv: https://arxiv.org/abs/2605.31490
+    note: Search found the paper but no official code repository.

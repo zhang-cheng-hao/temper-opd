@@ -1,0 +1,20 @@
+# Decoding action ladder for FlashOPD smoke/sweep experiments.
+# These are portability assets; the FlashOPD CLI does not read this file
+# directly. scripts/run_flashopd_constant_sweep.sh is the executable wrapper.
+
+smoke_config: configs/baselines/flashopd_qwen25_05b_smoke.yaml
+default_output_root: runs/flashopd_constant_sweep
+
+actions:
+  repair_like:
+    rollout_temperature: 0.7
+    rollout_top_p: 0.90
+  dwell_like:
+    rollout_temperature: 1.0
+    rollout_top_p: 0.95
+  mild_escape_like:
+    rollout_temperature: 1.2
+    rollout_top_p: 0.97
+  escape_like:
+    rollout_temperature: 1.4
+    rollout_top_p: 0.98

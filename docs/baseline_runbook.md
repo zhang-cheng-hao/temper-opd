@@ -17,6 +17,22 @@
 
 目标：确认 OPD 基本数据流能跑通。
 
+可迁移入口已固化为：
+
+```bash
+PYTHON_BIN=/opt/duyong_ssd/envs/llama_factory/bin/python \
+GPU=1 \
+scripts/run_flashopd_smoke.sh
+```
+
+环境文件见：
+
+```text
+configs/env/flashopd_smoke_requirements.txt
+configs/env/flashopd_smoke_environment.yml
+docs/migration_assets.md
+```
+
 如果 `baselines/flash-opd` 是重新下载的原始版本，先应用本仓库记录的兼容补丁：
 
 ```bash
