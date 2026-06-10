@@ -1,6 +1,7 @@
 baselines/*
 !baselines/README.md
 runs/
+logs/
 configs/reproduction/*.env
 __pycache__/
 *.pyc

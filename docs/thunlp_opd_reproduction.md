@@ -11,42 +11,40 @@
 | code | `baselines/thunlp-opd` 已下载，HEAD `83063cf62293` |
 | data | `datasets/dapo-math-17k.parquet` 和默认 AIME25/AMC23/AIME24 eval parquet 已读通 |
 | local validation | import/compile/shell syntax 通过，见 `runs/opd_baseline_smoke_local_validation_20260610_144946/summary.tsv` |
-| local env prefix | `/mmu_mllm_hdd/zhangchenghao05/envs/opd-thunlp` 已创建，含 Python 3.12 + 数据/tokenizer preflight 依赖 |
+| shared env prefix | `/mmu_mllm_hdd/zhangchenghao05/envs/opd-thunlp`；本机和 8 卡训练机共享文件系统，正式训练也用这个 prefix |
 | wrapper | `scripts/repro/run_thunlp_opd_8gpu.sh` 已准备，默认 `DRY_RUN=1` |
 | patch | `patches/thunlp-opd-env-overrides.patch` 已验证可 clean apply |
-| blocker | 本机缺官方默认 actor/reward 模型，且 full training 依赖仍需在 8 卡机器用 `INSTALL_THUNLP_DEPS=1` 安装 |
+| blocker | 仍需准备官方默认 actor/reward 模型，并在 8 卡机器上做 `--min-gpus 8` 环境验证 |
 
 ## Environment
 
-建议 8 卡机器单独创建环境，不和 TA-OPD/OPSD 共用：
+THUNLP OPD 单独使用一个 conda prefix，不和 TA-OPD/OPSD 共用。因为本机和 8 卡训练机共享文件系统，先在本机把完整环境装到：
+
+```bash
+/mmu_mllm_hdd/zhangchenghao05/envs/opd-thunlp
+```
+
+统一安装命令：
 
 ```bash
 export OPD_ENV_ROOT=/mmu_mllm_hdd/zhangchenghao05/envs
 export THUNLP_CONDA_PREFIX="${OPD_ENV_ROOT}/opd-thunlp"
 
-conda create -p "$THUNLP_CONDA_PREFIX" python==3.12 -y
-conda activate "$THUNLP_CONDA_PREFIX"
-
-cd /path/to/temper-opd/baselines/thunlp-opd/verl
-USE_MEGATRON=0 bash scripts/install_vllm_sglang_mcore.sh
-pip install math-verify
-pip install -e .
+RECREATE_ENV=1 INSTALL_THUNLP_DEPS=1 \
+  scripts/repro/bootstrap_thunlp_env.sh configs/reproduction/baseline_paths.env
 ```
 
 安装后检查：
 
 ```bash
 cd /path/to/temper-opd
-"$THUNLP_CONDA_PREFIX/bin/python" scripts/repro/check_thunlp_env.py --min-gpus 8 --fail-on-missing
+"$THUNLP_CONDA_PREFIX/bin/python" scripts/repro/check_thunlp_env.py --min-gpus 0 --fail-on-missing
 ```
 
-也可以用仓库脚本统一创建 prefix。默认创建 Python 3.12，并安装数据/tokenizer
-preflight 所需的轻量依赖；在 8 卡机器上加 `INSTALL_THUNLP_DEPS=1` 安装 THUNLP 的
-verl/vLLM/SGLang 依赖：
+到 8 卡机器后不重装环境，只用同一个 prefix 做 GPU 数检查：
 
 ```bash
-scripts/repro/bootstrap_thunlp_env.sh configs/reproduction/baseline_paths.env
-INSTALL_THUNLP_DEPS=1 scripts/repro/bootstrap_thunlp_env.sh configs/reproduction/baseline_paths.env
+"$THUNLP_CONDA_PREFIX/bin/python" scripts/repro/check_thunlp_env.py --min-gpus 8 --fail-on-missing
 ```
 
 关键版本/风险：
@@ -57,14 +55,19 @@ INSTALL_THUNLP_DEPS=1 scripts/repro/bootstrap_thunlp_env.sh configs/reproduction
 | vendored verl | `0.7.0.dev` |
 | vLLM | 当前安装脚本钉 `0.11.0`，不要退到 `0.7.x` |
 | Torch | 应为 `2.8.x`；SGLang extra 钉 `torch==2.8.0` |
-| FlashAttention | cp312 + cu12 + torch2.8 wheel，Python/Torch/CUDA 任一不匹配会炸 |
+| FlashAttention | 官方 wheel 可能依赖较新 glibc；当前共享环境优先用 `FLASH_ATTN_CUDA_ARCHS=80` 源码构建 |
 | Ray | setup.py 要 `ray[default]>=2.41.0` |
 | PyArrow | 建议确认 `>=19.0.0` |
 | Megatron | OPD/FSDP/vLLM 路线用 `USE_MEGATRON=0`，避免额外复杂依赖 |
 | DeepSpeed | 不是当前 OPD 脚本核心依赖，不要为了 OPD 额外升级 |
 
-本机当前 prefix 只安装了 preflight 依赖，已验证可读 parquet、可跑 tokenizer/stop-token 检查。
-它还不是 full training 环境；`check_thunlp_env.py` 会正确报告 `torch/vllm/ray/verl` 等缺失。
+如果 `flash_attn` import 报 `GLIBC_2.32 not found`，不要换整个环境；直接让
+`bootstrap_thunlp_env.sh` 的自动 fallback 从源码编译，或手动设置：
+
+```bash
+BUILD_FLASH_ATTN_FROM_SOURCE=1 FLASH_ATTN_CUDA_ARCHS=80 \
+  INSTALL_THUNLP_DEPS=1 scripts/repro/bootstrap_thunlp_env.sh configs/reproduction/baseline_paths.env
+```
 
 ## Data
 

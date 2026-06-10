@@ -84,13 +84,15 @@ runs/opd_baseline_smoke_<RUN_ID>/smoke.log
 
 ## 环境策略
 
-| 环境 | 用途 | 依据 |
-|---|---|---|
-| `/mmu_mllm_hdd/zhangchenghao05/envs/temper-opd-local-validation` | 本机验证代码路径和 FlashOPD 小步入口 | `configs/env/temper_opd_local_validation.yml` |
-| `/mmu_mllm_hdd/zhangchenghao05/envs/opd-thunlp` | 8 卡复现 vanilla OPD | THUNLP OPD/verl/ray/vllm 实际依赖 |
-| `/mmu_mllm_hdd/zhangchenghao05/envs/ta-opd` | 8 卡复现 TA-OPD | `baselines/ta-opd/requirements.txt` 和 `slime_ta_opd` 说明 |
-| `/mmu_mllm_hdd/zhangchenghao05/envs/opsd` | 8 卡复现 OPSD | `baselines/opsd/environment.yml` |
-| `/mmu_mllm_hdd/zhangchenghao05/envs/rpi-dev` | 我们自己的方法开发 | 在最终选定底座后再锁 |
+| 环境 | Baseline | 核心栈 | 用途 |
+|---|---|---|---|
+| `/mmu_mllm_hdd/zhangchenghao05/envs/temper-opd-flashopd` 或 local-validation env | FlashOPD smoke/dev | Python 3.11, torch 2.7.1, transformers 4.45.0, deepspeed 0.14.4, datasets 2.20.0 | 快速跑通 OPD loop、小模型 smoke、controller 原型 |
+| `/mmu_mllm_hdd/zhangchenghao05/envs/opd-thunlp` | THUNLP OPD / vanilla OPD | Python 3.12, torch 2.8.0+cu128, vLLM 0.11.0, SGLang 0.5.2, ray, vendored verl 0.7.0.dev0, numpy<2 | 主 baseline，正式 8 卡复现 |
+| `/mmu_mllm_hdd/zhangchenghao05/envs/ta-opd` | TA-OPD | Python 3.12, CUDA 12.9, torch 2.9.1+cu129, SGLang pinned commit, Megatron-LM pinned commit, flash-attn 2.7.4.post1, Transformer Engine, Apex, slime | TA-OPD 复现；Megatron/slime 格式专用 |
+| `/mmu_mllm_hdd/zhangchenghao05/envs/opsd` | OPSD | Python 3.10, torch 2.8.0, transformers 4.57.1, TRL 0.26.0, DeepSpeed 0.18.2, vLLM 0.11.0, xFormers 0.0.32.post1 | teacher-free/self-distillation 对照 |
+| `/mmu_mllm_hdd/zhangchenghao05/envs/hpd` | HPD candidate | verl-style stack, SGLang 0.4.9.post6, flash-attn, ray/vLLM deps | 可选 cheap distillation baseline，不排第一批 |
+| `/mmu_mllm_hdd/zhangchenghao05/envs/tinker-cookbook` | Tinker cookbook | Python >=3.11, tinker >=0.22.3, transformers >=4.57.6 | API/cookbook 候选，不和本地多卡训练栈混用 |
+| `/mmu_mllm_hdd/zhangchenghao05/envs/rpi-dev` | 我们自己的方法开发 | 在最终选定底座后再锁 | RPI-OPD 开发环境 |
 
 不建议一个环境装所有 baseline。冲突来自 `torch`/`transformers`/`deepspeed`/`vllm`/`ray`
 这些训练栈的强版本耦合，尤其是不同 repo 的 verl fork 和 CUDA 扩展依赖。
@@ -102,4 +104,5 @@ runs/opd_baseline_smoke_<RUN_ID>/smoke.log
 | TRB | 搜到论文和引用，但未找到官方训练代码；manifest 中记录为 `no_official_code_found` |
 | POPD/TOPD | 搜到论文，未找到官方代码；后续可直接在 OPD/FlashOPD/THUNLP loop 中实现 horizon-control baseline |
 | TrOPD | 官方 README 显示 training/evaluation code 仍是 TODO，当前只能作为代码未释放状态记录 |
-| THUNLP/HPD/OPSD full run | 需要 verl/ray/vllm/sglang 等重依赖和本地路径改造；应在 8 卡机器上正式复现 |
+| THUNLP full run | 共享 prefix 已准备环境；还需要官方 actor/reward 模型和 8 卡机器 `--min-gpus 8` 验证 |
+| HPD/OPSD full run | 需要各自训练栈环境和本地路径改造；应在 8 卡机器上正式复现 |
