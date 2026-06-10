@@ -13,6 +13,7 @@ LOG="$OUT_DIR/smoke.log"
 SUMMARY="$OUT_DIR/summary.tsv"
 : > "$LOG"
 printf "name\tstatus\tdetail\n" > "$SUMMARY"
+FAILURES=0
 
 record() {
   printf "%s\t%s\t%s\n" "$1" "$2" "$3" | tee -a "$SUMMARY"
@@ -26,7 +27,7 @@ run_logged() {
     record "$name" "PASS" "$*"
   else
     record "$name" "FAIL" "$*"
-    return 1
+    FAILURES=$((FAILURES + 1))
   fi
 }
 
@@ -60,11 +61,17 @@ else
 fi
 
 if [ "$RUN_FLASHOPD" = "1" ]; then
-  PYTHON_BIN="$PYTHON_BIN" GPU="$GPU" RUN_ID="baseline_smoke_$RUN_ID" \
-    "$ROOT_DIR/scripts/run_flashopd_smoke.sh" >> "$LOG" 2>&1
-  record "flashopd_12step" "PASS" "actual 12-step run via scripts/run_flashopd_smoke.sh"
+  echo "==> flashopd_12step" | tee -a "$LOG"
+  if PYTHON_BIN="$PYTHON_BIN" GPU="$GPU" RUN_ID="baseline_smoke_$RUN_ID" \
+    "$ROOT_DIR/scripts/run_flashopd_smoke.sh" >> "$LOG" 2>&1; then
+    record "flashopd_12step" "PASS" "actual 12-step run via scripts/run_flashopd_smoke.sh"
+  else
+    record "flashopd_12step" "FAIL" "actual 12-step run via scripts/run_flashopd_smoke.sh"
+    FAILURES=$((FAILURES + 1))
+  fi
 else
   record "flashopd_12step" "SKIP" "RUN_FLASHOPD=$RUN_FLASHOPD"
 fi
 
 echo "Smoke summary: $SUMMARY"
+exit "$FAILURES"

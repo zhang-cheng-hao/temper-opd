@@ -8,6 +8,14 @@
 - 论文复现结果是否对齐，在 8 卡机器上跑，不在本机用缩小 smoke 判断。
 - 不强行把所有 baseline 塞进一个环境；full reproduction 按 baseline 拆环境。
 
+8 卡正式执行命令和路径检查见：
+
+```text
+docs/8gpu_baseline_reproduction.md
+configs/reproduction/baseline_paths.env.template
+scripts/repro/check_8gpu_prereqs.sh
+```
+
 ## 本机验证环境
 
 环境文件：
