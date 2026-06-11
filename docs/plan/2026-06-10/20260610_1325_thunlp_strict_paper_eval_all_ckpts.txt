@@ -1,0 +1,76 @@
+# THUNLP OPD strict paper eval all checkpoints
+# generated_at: 2026-06-10 13:25 UTC
+# smoke_status: passed
+# repo: /mmu_mllm_hdd/zhangchenghao05/code/temper-opd
+# task_type: eval
+
+## 0. Assumptions
+- 脚本会在启动时扫描 `CKPT_ROOT` 下所有 `global_step_*` checkpoint，并按版本号排序评估。
+- 论文/官方 README 独立 eval setting：`scripts/val/data`，`AIME24/AIME25/AMC23`，`n=16`，`temperature=0.7`，`top_p=0.95`，`max_tokens=31744`，`enable_thinking=false`。
+- eval 直接使用 parquet 里的 prompt，不额外拼接 `Please reason step by step...`。
+- `mean_score` 对应论文图里的 `avg@16 accuracy`；`best_score` 只作 pass@16 类参考。
+- 为了判断复现，还会跑 `base_orig` 和 `teacher_justrl` 作为 student baseline 和 teacher dashed-line 参考。
+
+## 0.1 使用方式
+- 第 1 节是已经通过的 smoke/debug 背景。
+- 第 2 节是本次正式 eval 命令，输出统一进入 `runs/thunlp_strict_paper_eval_20260610/`。
+- 如中断，重新执行第 2 节即可；已转换好的 HF checkpoint 会跳过，eval 默认跳过已有完整 jsonl。
+
+## 1. Local smoke
+```bash
+cd /mmu_mllm_hdd/zhangchenghao05/code/temper-opd
+export THUNLP_CONDA_PREFIX=/mmu_mllm_hdd/zhangchenghao05/envs/opd-thunlp
+export CUDA_HOME="$THUNLP_CONDA_PREFIX"
+export CUDA_PATH="$THUNLP_CONDA_PREFIX"
+export CUDA_TARGET_DIR="$THUNLP_CONDA_PREFIX/targets/x86_64-linux"
+export SITE_NVIDIA="$THUNLP_CONDA_PREFIX/lib/python3.12/site-packages/nvidia"
+export COMPAT="$THUNLP_CONDA_PREFIX/cuda-compat-12-8/usr/local/cuda-12.8/compat"
+export PATH="$THUNLP_CONDA_PREFIX/bin:$CUDA_TARGET_DIR/bin:$PATH"
+export FLASHINFER_JIT_DIR="$PWD/runs/thunlp_eval_ckpt_compare_20260610/flashinfer_jit_cache"
+export CPATH="$CUDA_TARGET_DIR/include:$SITE_NVIDIA/cuda_runtime/include:$SITE_NVIDIA/cuda_nvcc/include:$SITE_NVIDIA/curand/include:${CPATH:-}"
+export C_INCLUDE_PATH="$CUDA_TARGET_DIR/include:$SITE_NVIDIA/cuda_runtime/include:$SITE_NVIDIA/cuda_nvcc/include:$SITE_NVIDIA/curand/include:${C_INCLUDE_PATH:-}"
+export CPLUS_INCLUDE_PATH="$CUDA_TARGET_DIR/include:$SITE_NVIDIA/cuda_runtime/include:$SITE_NVIDIA/cuda_nvcc/include:$SITE_NVIDIA/curand/include:${CPLUS_INCLUDE_PATH:-}"
+export LIBRARY_PATH="$CUDA_TARGET_DIR/lib:$THUNLP_CONDA_PREFIX/lib:$SITE_NVIDIA/cuda_runtime/lib:$SITE_NVIDIA/curand/lib:${LIBRARY_PATH:-}"
+export LD_LIBRARY_PATH="$COMPAT:$CUDA_TARGET_DIR/lib:$THUNLP_CONDA_PREFIX/lib:$SITE_NVIDIA/cuda_runtime/lib:$SITE_NVIDIA/curand/lib:${LD_LIBRARY_PATH:-}"
+/mmu_mllm_hdd/zhangchenghao05/envs/opd-thunlp/bin/python scripts/repro/run_thunlp_readme_eval.py \
+  --model /mmu_mllm_hdd/zhangchenghao05/models/DeepSeek-R1-Distill-Qwen-1.5B \
+  --name smoke_orig_corrected \
+  --output-root runs/thunlp_eval_ckpt_compare_20260610/smoke_outputs \
+  --tasks AIME24 \
+  --n 1 \
+  --max-tokens 16 \
+  --gpu-ids 0 \
+  --replace
+```
+
+## 2. Full run
+```bash
+cd /mmu_mllm_hdd/zhangchenghao05/code/temper-opd
+THUNLP_CONDA_PREFIX=/mmu_mllm_hdd/zhangchenghao05/envs/opd-thunlp \
+GPU_IDS=0,1,2,3,4,5,6,7 \
+NPROC_PER_NODE=8 \
+INCLUDE_BASE=1 \
+INCLUDE_TEACHER=1 \
+RUN_DIR=/mmu_mllm_hdd/zhangchenghao05/code/temper-opd/runs/thunlp_strict_paper_eval_20260610 \
+bash scripts/repro/run_thunlp_strict_paper_eval_all_ckpts.sh
+```
+
+## 3. Logs
+```bash
+cd /mmu_mllm_hdd/zhangchenghao05/code/temper-opd
+tail -f runs/thunlp_strict_paper_eval_20260610/logs/eval_global_step_80.log
+```
+
+## 4. Resume / stop
+- 停止：找到对应 shell/python/torchrun 进程后 `kill`，不要删除 checkpoint。
+- 继续：重新执行第 2 节命令。
+- 强制重跑 eval：加 `EVAL_REPLACE=1`。
+
+## 5. Expected outputs
+- HF merged checkpoints: `runs/thunlp_strict_paper_eval_20260610/hf/global_step_*`
+- Eval jsonl/results: `runs/thunlp_strict_paper_eval_20260610/eval_outputs/<model>/`
+- 汇总表: `runs/thunlp_strict_paper_eval_20260610/summary.tsv`
+
+## 6. Needs alignment
+- 本次 teacher 使用本地 mirror `/mmu_mllm_hdd/zhangchenghao05/models/JustRL-DeepSeek-1.5B`，不是 gated 官方路径。
+- 如果训练期间产生新的 `global_step_*`，本次脚本只评估启动时发现的 checkpoint；需要重跑脚本或单独补评新 checkpoint。
