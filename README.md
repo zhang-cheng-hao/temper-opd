@@ -197,6 +197,40 @@ baselines/opsd              https://github.com/siyan-zhao/OPSD
 默认不把这些外部仓库的完整代码提交到本项目 GitHub；主仓库只保留 baseline manifest。
 如果后面需要可复现地锁定版本，再改成 git submodule。
 
+## Y-OPD 入口链路
+
+当前 Y-OPD 原型接在 THUNLP OPD 训练 loop 上，用全局序列级温度控制器做
+training-time rollout policy 调整。启动方式：
+
+```bash
+Y_OPD_ENABLED=true bash baselines/thunlp-opd/on_policy_distillation.sh
+```
+
+在本仓库的复现 wrapper 中，先应用
+`patches/thunlp-opd-env-overrides.patch`；当 `Y_OPD_ENABLED` 为 truthy 时，再应用
+`patches/thunlp-opd-y-opd.patch`，把下面这条链路补到外部
+`baselines/thunlp-opd` 代码里。
+
+关键链路：
+
+- 启动入口：`baselines/thunlp-opd/on_policy_distillation.sh` 读取
+  `Y_OPD_ENABLED`、`Y_OPD_TEMPERATURES`、`Y_OPD_TOP_P` 等环境变量。
+- Hydra 配置注入：同一脚本把 `+actor_rollout_ref.rollout.y_opd.*` 传入
+  rollout config。
+- trainer 初始化：`baselines/thunlp-opd/verl/verl/trainer/ppo/ray_trainer.py`
+  创建 `GlobalYOPDController(y_opd_config)`。
+- 生成前 snapshot：trainer 在每个 step 生成前写入
+  `gen_batch_output.meta_info["y_opd_policy"]`。
+- rollout 执行：`baselines/thunlp-opd/verl/verl/workers/rollout/vllm_rollout/vllm_rollout_spmd.py`
+  通过 `_build_y_opd_sampling_params(...)` 为每个样本选择温度，并在 vLLM
+  `generate` 前替换成 per-sample `SamplingParams`。
+- controller 更新：teacher/student 批注后，trainer 调用
+  `self.y_opd_controller.update_from_batch(...)`，使用 `y_opd_temp_id`、
+  `old_log_probs`、student top-k 和 teacher-on-student log-prob 等张量更新温度分布。
+- 核心逻辑：`baselines/thunlp-opd/verl/verl/trainer/ppo/y_opd_controller.py`
+  定义温度空间、A/B yield、virtual likelihood credit、`sparsemax/softmax`
+  normalizer 和 logits 更新；checkpoint 中保存 `y_opd_controller.pt`。
+
 ## 推荐启动顺序
 
 1. 下载 baseline 到 `baselines/`。
@@ -235,10 +269,12 @@ fallback：
 ## 当前状态
 
 - [x] baseline OPD 代码下载完成。
-- [ ] vanilla OPD 复现完成。
+- [x] THUNLP-OPD strict paper eval 复现完成，结果见
+  `docs/results/2026-06-11_thunlp_strict_paper_eval.md`。
 - [ ] constant decoding sweep 完成。
 - [ ] local-control pilot 完成。
 - [ ] global bandit baseline 完成。
+- [ ] Y-OPD 与 THUNLP-OPD strict eval 对比完成。
 - [ ] `phi(z)` controller 实现完成。
 - [ ] `phi(z,kappa)` controller 实现完成。
 - [ ] matched-compute downstream evaluation 完成。

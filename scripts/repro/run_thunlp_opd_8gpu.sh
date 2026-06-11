@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="${ROOT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 ENV_FILE="${1:-$ROOT_DIR/configs/reproduction/baseline_paths.env}"
 PATCH_FILE="$ROOT_DIR/patches/thunlp-opd-env-overrides.patch"
+Y_OPD_PATCH_FILE="$ROOT_DIR/patches/thunlp-opd-y-opd.patch"
 DRY_RUN="${DRY_RUN:-1}"
 FAIL_ON_TOKENIZER_MISMATCH="${FAIL_ON_TOKENIZER_MISMATCH:-0}"
 STRICT_ENV_CHECK="${STRICT_ENV_CHECK:-0}"
@@ -149,6 +150,29 @@ if ! grep -Fq 'export ACTOR_MODEL_PATH=${ACTOR_MODEL_PATH:-' on_policy_distillat
   echo "Env override patch check failed after patch step." >&2
   exit 1
 fi
+
+case "${Y_OPD_ENABLED:-false}" in
+  1|true|True|TRUE|yes|Yes|YES)
+    if [ -f verl/verl/trainer/ppo/y_opd_controller.py ] \
+      && grep -Fq 'y_opd: dict = field(default_factory=dict)' verl/verl/workers/config/rollout.py \
+      && grep -Fq 'actor_rollout_ref.rollout.y_opd.enabled' on_policy_distillation.sh; then
+      echo "==> Y-OPD patch already applied"
+    elif git apply --unidiff-zero --check "$Y_OPD_PATCH_FILE" >/dev/null 2>&1; then
+      echo "==> Applying Y-OPD patch"
+      git apply --unidiff-zero "$Y_OPD_PATCH_FILE"
+    else
+      echo "Y-OPD patch is neither applied nor cleanly applicable: $Y_OPD_PATCH_FILE" >&2
+      exit 1
+    fi
+
+    if [ ! -f verl/verl/trainer/ppo/y_opd_controller.py ] \
+      || ! grep -Fq 'y_opd: dict = field(default_factory=dict)' verl/verl/workers/config/rollout.py \
+      || ! grep -Fq 'actor_rollout_ref.rollout.y_opd.enabled' on_policy_distillation.sh; then
+      echo "Y-OPD patch check failed after patch step." >&2
+      exit 1
+    fi
+    ;;
+esac
 
 env_check_args=("$ROOT_DIR/scripts/repro/check_thunlp_env.py" --min-gpus "${N_GPUS_PER_NODE:-8}")
 if [ "$STRICT_ENV_CHECK" = "1" ]; then

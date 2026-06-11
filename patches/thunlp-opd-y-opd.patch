@@ -1,0 +1,584 @@
+diff --git a/on_policy_distillation.sh b/on_policy_distillation.sh
+index 4645e99..6a1f889 100644
+--- a/on_policy_distillation.sh
++++ b/on_policy_distillation.sh
+@@ -61,6 +61,19 @@ export N_RESPONSES=${N_RESPONSES:-4} # TODO: 4 / 8 / 16 / 32 (default: 8)
+ export LOG_PROB_TOP_K=${LOG_PROB_TOP_K:-16} # 0 represents no top-k sampling
+ export TOP_K_STRATEGY=${TOP_K_STRATEGY:-"only_stu"} # "only_stu" or "only_tch" or "intersection" or "union" or "union-intersection"
+ export REWARD_WEIGHT_MODE=${REWARD_WEIGHT_MODE:-"student_p"} # "student_p" or "teacher_p" or "none"
++export Y_OPD_ENABLED=${Y_OPD_ENABLED:-false}
++export Y_OPD_TEMPERATURES=${Y_OPD_TEMPERATURES:-"[0.5,0.6,0.7,0.8,0.9,1.0,1.1,1.2,1.3,1.4,1.5,1.6,1.7]"}
++export Y_OPD_TOP_P=${Y_OPD_TOP_P:-0.95}
++export Y_OPD_POLICY_TOP_P=${Y_OPD_POLICY_TOP_P:-0.7}
++export Y_OPD_WARMUP_TEMPERATURE=${Y_OPD_WARMUP_TEMPERATURE:-1.0}
++export Y_OPD_ETA=${Y_OPD_ETA:-0.05}
++export Y_OPD_EPSILON=${Y_OPD_EPSILON:-0.05}
++export Y_OPD_WARMUP_STEPS=${Y_OPD_WARMUP_STEPS:-10}
++export Y_OPD_RHO=${Y_OPD_RHO:-0.05}
++export Y_OPD_B_WEIGHT=${Y_OPD_B_WEIGHT:-5.0}
++export Y_OPD_MASS_THRESHOLD=${Y_OPD_MASS_THRESHOLD:-0.5}
++export Y_OPD_CREDIT_NORMALIZER=${Y_OPD_CREDIT_NORMALIZER:-sparsemax}
++export Y_OPD_SEED=${Y_OPD_SEED:-0}
+ # export LR=${LR:-1e-6}
+ # export LR_SCHEDULER=${LR_SCHEDULER:-constant}
+ export USE_KL=${USE_KL:-False} # TODO: True / False (default False)
+@@ -208,6 +221,19 @@ python3 -m verl.trainer.main_ppo \
+     +actor_rollout_ref.rollout.top_k_strategy=$TOP_K_STRATEGY \
+     +actor_rollout_ref.rollout.reward_weight_mode=$REWARD_WEIGHT_MODE \
+     +actor_rollout_ref.rollout.teacher_temperature=$TEACHER_TEMPERATURE \
++    +actor_rollout_ref.rollout.y_opd.enabled=$Y_OPD_ENABLED \
++    +actor_rollout_ref.rollout.y_opd.temperatures=$Y_OPD_TEMPERATURES \
++    +actor_rollout_ref.rollout.y_opd.top_p=$Y_OPD_TOP_P \
++    +actor_rollout_ref.rollout.y_opd.policy_top_p=$Y_OPD_POLICY_TOP_P \
++    +actor_rollout_ref.rollout.y_opd.warmup_temperature=$Y_OPD_WARMUP_TEMPERATURE \
++    +actor_rollout_ref.rollout.y_opd.eta=$Y_OPD_ETA \
++    +actor_rollout_ref.rollout.y_opd.epsilon=$Y_OPD_EPSILON \
++    +actor_rollout_ref.rollout.y_opd.warmup_steps=$Y_OPD_WARMUP_STEPS \
++    +actor_rollout_ref.rollout.y_opd.rho=$Y_OPD_RHO \
++    +actor_rollout_ref.rollout.y_opd.b_weight=$Y_OPD_B_WEIGHT \
++    +actor_rollout_ref.rollout.y_opd.mass_threshold=$Y_OPD_MASS_THRESHOLD \
++    +actor_rollout_ref.rollout.y_opd.credit_normalizer=$Y_OPD_CREDIT_NORMALIZER \
++    +actor_rollout_ref.rollout.y_opd.seed=$Y_OPD_SEED \
+     actor_rollout_ref.rollout.tensor_model_parallel_size=$PARALLEL_SIZE \
+     actor_rollout_ref.rollout.gpu_memory_utilization=${VLLM_GPU_MEMORY_UTILIZATION:-0.8} \
+     actor_rollout_ref.rollout.max_model_len=$MAX_MODEL_LEN \
+@@ -242,7 +268,7 @@ python3 -m verl.trainer.main_ppo \
+     trainer.test_freq=${TEST_FREQ:--1} \
+     trainer.total_epochs=${TOTAL_EPOCHS:-1} \
+     trainer.default_local_dir="$CKPT_PATH" \
+-    trainer.is_plot=$IS_PLOT \
++    trainer.is_plot=$IS_PLOT
+ 
+ # Log the end time for local runs.
+ if [ -z "$SLURM_JOB_ID" ]; then
+diff --git a/verl/verl/trainer/ppo/ray_trainer.py b/verl/verl/trainer/ppo/ray_trainer.py
+index 276094c..911a26d 100644
+--- a/verl/verl/trainer/ppo/ray_trainer.py
++++ b/verl/verl/trainer/ppo/ray_trainer.py
+@@ -51,6 +51,7 @@ from verl.trainer.ppo.metric_utils import (
+ )
+ from verl.trainer.ppo.reward import compute_reward, compute_reward_async
+ from verl.trainer.ppo.utils import Role, WorkerType, need_critic, need_reference_policy, need_reward_model
++from verl.trainer.ppo.y_opd_controller import GlobalYOPDController
+ from verl.utils.checkpoint.checkpoint_manager import find_latest_ckpt_path, should_save_ckpt_esi
+ from verl.utils.config import omega_conf_to_dataclass
+ from verl.utils.debug import marked_timer
+@@ -322,6 +323,8 @@ class RayPPOTrainer:
+         self.config = config
+         self.reward_fn = reward_fn
+         self.val_reward_fn = val_reward_fn
++        y_opd_config = self.config.actor_rollout_ref.rollout.get("y_opd", None)
++        self.y_opd_controller = GlobalYOPDController(y_opd_config) if y_opd_config is not None else None
+ 
+         self.hybrid_engine = config.actor_rollout_ref.hybrid_engine
+         assert self.hybrid_engine, "Currently, only support hybrid engine"
+@@ -837,6 +840,8 @@ class RayPPOTrainer:
+         dataloader_local_path = os.path.join(local_global_step_folder, "data.pt")
+         dataloader_state_dict = self.train_dataloader.state_dict()
+         torch.save(dataloader_state_dict, dataloader_local_path)
++        if self.y_opd_controller is not None and self.y_opd_controller.enabled:
++            self.y_opd_controller.save(os.path.join(local_global_step_folder, "y_opd_controller.pt"))
+ 
+         # latest checkpointed iteration tracker (for atomic usage)
+         local_latest_checkpointed_iteration = os.path.join(
+@@ -905,6 +910,14 @@ class RayPPOTrainer:
+         else:
+             print(f"Warning: No dataloader state found at {dataloader_local_path}, will start from scratch")
+ 
++        if self.y_opd_controller is not None and self.y_opd_controller.enabled:
++            y_opd_path = os.path.join(global_step_folder, "y_opd_controller.pt")
++            if os.path.exists(y_opd_path):
++                self.y_opd_controller.load(y_opd_path)
++                print(f"Loaded Y-OPD controller from {y_opd_path}")
++            else:
++                print(f"Warning: No Y-OPD controller state found at {y_opd_path}; initializing from scratch")
++
+     def _start_profiling(self, do_profile: bool) -> None:
+         """Start profiling for all worker groups if profiling is enabled."""
+         if do_profile:
+@@ -1042,6 +1055,10 @@ class RayPPOTrainer:
+                 gen_batch_output = gen_batch.repeat(
+                     repeat_times=self.config.actor_rollout_ref.rollout.n, interleave=True
+                 )
++                if self.y_opd_controller is not None and self.y_opd_controller.enabled:
++                    # Before generation this variable is the actual rollout input.
++                    # Rollout workers sample one sequence-level temperature per row.
++                    gen_batch_output.meta_info["y_opd_policy"] = self.y_opd_controller.snapshot(self.global_steps)
+ 
+                 is_last_step = self.global_steps >= self.total_training_steps
+                 with marked_timer("step", timing_raw):
+@@ -1142,6 +1159,14 @@ class RayPPOTrainer:
+                                 with marked_timer("compute_distillation_reward", timing_raw, color="orange"):
+                                     distillation_output = self.actor_rollout_wg.compute_distillation_reward(batch)
+                                     batch = batch.union(distillation_output)
++
++                            if self.y_opd_controller is not None and self.y_opd_controller.enabled:
++                                with marked_timer("y_opd_update", timing_raw, color="green"):
++                                    y_opd_result = self.y_opd_controller.update_from_batch(
++                                        batch=batch,
++                                        global_step=self.global_steps,
++                                    )
++                                    metrics.update(y_opd_result.metrics)
+                         
+                         # Plot overlapping tokens for Reverse KL
+                         if (self.global_steps == 1 or self.global_steps % 10 == 0) and "student_valid_counts" in batch.batch.keys():
+diff --git a/verl/verl/trainer/ppo/y_opd_controller.py b/verl/verl/trainer/ppo/y_opd_controller.py
+new file mode 100644
+index 0000000..ad98c68
+--- /dev/null
++++ b/verl/verl/trainer/ppo/y_opd_controller.py
+@@ -0,0 +1,333 @@
++import math
++from dataclasses import dataclass
++from typing import Any
++
++import torch
++
++
++def _cfg_get(cfg: Any, key: str, default: Any) -> Any:
++    if cfg is None:
++        return default
++    if isinstance(cfg, dict):
++        return cfg.get(key, default)
++    return cfg.get(key, default)
++
++
++@dataclass
++class YOPDUpdateResult:
++    metrics: dict[str, float]
++    updated: bool
++
++
++class GlobalYOPDController:
++    """Global sequence-level temperature controller for Y-OPD.
++
++    The controller owns only training-time rollout policy state. It never changes
++    the student loss; it scores finished rollouts using existing OPD
++    student/teacher tensors and updates a global distribution over temperatures.
++    """
++
++    def __init__(self, config: Any):
++        self.enabled = bool(_cfg_get(config, "enabled", False))
++        self.temperatures = [
++            float(x)
++            for x in _cfg_get(
++                config,
++                "temperatures",
++                [0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7],
++            )
++        ]
++        if len(self.temperatures) == 0:
++            raise ValueError("Y-OPD requires at least one temperature.")
++
++        self.top_p = float(_cfg_get(config, "top_p", 0.95))
++        self.policy_top_p = float(_cfg_get(config, "policy_top_p", 0.7))
++        self.warmup_temperature = float(_cfg_get(config, "warmup_temperature", 1.0))
++        self.eta = float(_cfg_get(config, "eta", 0.05))
++        self.epsilon = float(_cfg_get(config, "epsilon", 0.05))
++        self.rho = float(_cfg_get(config, "rho", 0.05))
++        self.b_weight = float(_cfg_get(config, "b_weight", 5.0))
++        self.mass_threshold = float(_cfg_get(config, "mass_threshold", 0.5))
++        self.warmup_steps = int(_cfg_get(config, "warmup_steps", 10))
++        self.threshold_ema = float(_cfg_get(config, "threshold_ema", 0.95))
++        self.baseline_ema = float(_cfg_get(config, "baseline_ema", 0.95))
++        self.adv_clip = float(_cfg_get(config, "adv_clip", 5.0))
++        self.logit_clip = float(_cfg_get(config, "logit_clip", 5.0))
++        self.credit_temperature = float(_cfg_get(config, "credit_temperature", 1.0))
++        self.credit_normalizer = str(_cfg_get(config, "credit_normalizer", "sparsemax"))
++        self.seed = int(_cfg_get(config, "seed", 0))
++
++        self.logits = torch.zeros(len(self.temperatures), dtype=torch.float32)
++        self.baseline_y = 0.0
++        self.baseline_initialized = False
++        self.thresholds: dict[str, float] = {}
++
++    def policy_probs(self) -> torch.Tensor:
++        probs = torch.softmax(self.logits, dim=-1)
++        if self.epsilon > 0:
++            uniform = torch.full_like(probs, 1.0 / probs.numel())
++            probs = (1.0 - self.epsilon) * probs + self.epsilon * uniform
++        return probs
++
++    def snapshot(self, global_step: int) -> dict[str, Any]:
++        probs = self.policy_probs()
++        return {
++            "enabled": self.enabled,
++            "temperatures": list(self.temperatures),
++            "probs": probs.detach().cpu().tolist(),
++            "top_p": self.top_p,
++            "policy_top_p": self.policy_top_p,
++            "forced_temperature": self.warmup_temperature if int(global_step) <= self.warmup_steps else None,
++            "seed": self.seed + int(global_step) * 1000003,
++        }
++
++    def state_dict(self) -> dict[str, Any]:
++        return {
++            "enabled": self.enabled,
++            "temperatures": list(self.temperatures),
++            "top_p": self.top_p,
++            "policy_top_p": self.policy_top_p,
++            "warmup_temperature": self.warmup_temperature,
++            "eta": self.eta,
++            "epsilon": self.epsilon,
++            "rho": self.rho,
++            "b_weight": self.b_weight,
++            "mass_threshold": self.mass_threshold,
++            "warmup_steps": self.warmup_steps,
++            "threshold_ema": self.threshold_ema,
++            "baseline_ema": self.baseline_ema,
++            "adv_clip": self.adv_clip,
++            "logit_clip": self.logit_clip,
++            "credit_temperature": self.credit_temperature,
++            "credit_normalizer": self.credit_normalizer,
++            "seed": self.seed,
++            "logits": self.logits,
++            "baseline_y": self.baseline_y,
++            "baseline_initialized": self.baseline_initialized,
++            "thresholds": dict(self.thresholds),
++        }
++
++    def load_state_dict(self, state: dict[str, Any]) -> None:
++        if list(state["temperatures"]) != self.temperatures:
++            raise ValueError(
++                f"Cannot load Y-OPD controller with temperatures {state['temperatures']} "
++                f"into controller with temperatures {self.temperatures}."
++            )
++        self.logits = state["logits"].detach().cpu().float()
++        self.baseline_y = float(state.get("baseline_y", 0.0))
++        self.baseline_initialized = bool(state.get("baseline_initialized", False))
++        self.thresholds = {k: float(v) for k, v in state.get("thresholds", {}).items()}
++
++    def save(self, path: str) -> None:
++        torch.save(self.state_dict(), path)
++
++    def load(self, path: str) -> None:
++        self.load_state_dict(torch.load(path, map_location="cpu", weights_only=False))
++
++    @torch.no_grad()
++    def update_from_batch(self, batch, global_step: int) -> YOPDUpdateResult:
++        metrics: dict[str, float] = {"y_opd/enabled": float(self.enabled)}
++        if not self.enabled:
++            return YOPDUpdateResult(metrics=metrics, updated=False)
++
++        required = [
++            "response_mask",
++            "responses",
++            "old_log_probs",
++            "entropys",
++            "student_top_k_ids",
++            "student_top_k_log_probs",
++            "teacher_on_student_log_probs",
++            "y_opd_temp_id",
++        ]
++        missing = [key for key in required if key not in batch.batch.keys()]
++        if missing:
++            metrics["y_opd/skipped_missing_tensors"] = 1.0
++            return YOPDUpdateResult(metrics=metrics, updated=False)
++
++        response_mask = batch.batch["response_mask"].bool()
++        responses = batch.batch["responses"]
++        old_log_probs = batch.batch["old_log_probs"].float()
++        entropys = batch.batch["entropys"].float()
++        student_top_k_ids = batch.batch["student_top_k_ids"]
++        student_top_k_log_probs = batch.batch["student_top_k_log_probs"].float()
++        teacher_on_student_log_probs = batch.batch["teacher_on_student_log_probs"].float()
++        temp_id = batch.batch["y_opd_temp_id"].long()
++
++        finite = torch.isfinite(old_log_probs) & torch.isfinite(entropys)
++        valid = response_mask & finite
++        if valid.sum().item() == 0:
++            metrics["y_opd/skipped_no_valid_tokens"] = 1.0
++            return YOPDUpdateResult(metrics=metrics, updated=False)
++
++        safe_student_logp = student_top_k_log_probs.masked_fill(~torch.isfinite(student_top_k_log_probs), -80.0)
++        safe_teacher_logp = teacher_on_student_log_probs.masked_fill(
++            ~torch.isfinite(teacher_on_student_log_probs), -80.0
++        )
++        student_p = torch.softmax(safe_student_logp, dim=-1)
++        disagreement = torch.sum(student_p * (safe_student_logp - safe_teacher_logp), dim=-1)
++        teacher_mass_on_student = torch.exp(safe_teacher_logp).sum(dim=-1).clamp(max=1.0)
++
++        batch_thresholds = self._batch_thresholds(entropys, disagreement, valid)
++        if not self.thresholds:
++            self.thresholds = batch_thresholds
++
++        active_update = int(global_step) > self.warmup_steps
++        thresholds = self.thresholds
++        a_token = entropys > thresholds["entropy_high"]
++        b_token = (
++            (entropys < thresholds["entropy_low"])
++            & (disagreement > thresholds["disagreement_high"])
++            & (teacher_mass_on_student > self.mass_threshold)
++        )
++        a_token = a_token & valid
++        b_token = b_token & valid
++
++        token_count = valid.sum(dim=-1).clamp_min(1)
++        a_rate = a_token.float().sum(dim=-1) / token_count
++        b_rate = b_token.float().sum(dim=-1) / token_count
++        y = a_rate + self.b_weight * b_rate
++
++        valid_seq = (valid.sum(dim=-1) > 0) & (temp_id >= 0) & (temp_id < len(self.temperatures))
++        if valid_seq.sum().item() == 0:
++            self._update_thresholds(batch_thresholds)
++            metrics["y_opd/skipped_no_valid_sequences"] = 1.0
++            return YOPDUpdateResult(metrics=metrics, updated=False)
++
++        y_valid = y[valid_seq]
++        temp_id_valid = temp_id[valid_seq]
++        mean_y = y_valid.mean().detach()
++        if not self.baseline_initialized:
++            self.baseline_y = float(mean_y.item())
++            self.baseline_initialized = True
++
++        baseline = torch.tensor(self.baseline_y, dtype=y_valid.dtype, device=y_valid.device)
++        advantage = (y_valid - baseline).clamp(min=-self.adv_clip, max=self.adv_clip)
++
++        update_applied = False
++        if active_update and valid_seq.sum().item() > 0:
++            credit = self._temperature_credit(
++                old_log_probs=old_log_probs[valid_seq],
++                responses=responses[valid_seq],
++                student_top_k_ids=student_top_k_ids[valid_seq],
++                student_top_k_log_probs=safe_student_logp[valid_seq],
++                weights=(self.rho + a_token.float() + self.b_weight * b_token.float())[valid_seq],
++                valid=valid[valid_seq],
++            )
++            pi = self.policy_probs().to(device=credit.device, dtype=credit.dtype)
++            delta = self.eta * (advantage.unsqueeze(-1) * (credit - pi.unsqueeze(0))).mean(dim=0)
++            self.logits += delta.detach().cpu()
++            self.logits -= self.logits.mean()
++            self.logits.clamp_(min=-self.logit_clip, max=self.logit_clip)
++            update_applied = True
++
++            metrics["y_opd/credit_entropy"] = float(self._entropy(credit.mean(dim=0)).detach().cpu().item())
++            metrics["y_opd/credit_max"] = float(credit.max(dim=-1).values.mean().detach().cpu().item())
++
++        self.baseline_y = self.baseline_ema * self.baseline_y + (1.0 - self.baseline_ema) * float(mean_y.item())
++        self._update_thresholds(batch_thresholds)
++
++        probs = self.policy_probs()
++        metrics.update(
++            {
++                "y_opd/update_active": float(update_applied),
++                "y_opd/warmup_active": float(not active_update),
++                "y_opd/num_valid_sequences": float(valid_seq.sum().item()),
++                "y_opd/valid_token_ratio": float(valid.float().mean().detach().cpu().item()),
++                "y_opd/mean_A_rate": float(a_rate[valid_seq].mean().detach().cpu().item()),
++                "y_opd/mean_B_rate": float(b_rate[valid_seq].mean().detach().cpu().item()),
++                "y_opd/mean_Y": float(mean_y.detach().cpu().item()),
++                "y_opd/baseline_Y": float(self.baseline_y),
++                "y_opd/adv_mean": float(advantage.mean().detach().cpu().item()),
++                "y_opd/adv_abs_mean": float(advantage.abs().mean().detach().cpu().item()),
++                "y_opd/policy_entropy": float(self._entropy(probs).detach().cpu().item()),
++                "y_opd/logit_norm": float(self.logits.norm().item()),
++                "y_opd/threshold_entropy_high": float(self.thresholds["entropy_high"]),
++                "y_opd/threshold_entropy_low": float(self.thresholds["entropy_low"]),
++                "y_opd/threshold_disagreement_high": float(self.thresholds["disagreement_high"]),
++            }
++        )
++        for i, temp in enumerate(self.temperatures):
++            temp_mask = temp_id_valid == i
++            metrics[f"y_opd/prob_T_{temp:g}"] = float(probs[i].item())
++            metrics[f"y_opd/usage_T_{temp:g}"] = float(temp_mask.float().mean().detach().cpu().item())
++            if temp_mask.any():
++                metrics[f"y_opd/mean_Y_T_{temp:g}"] = float(y_valid[temp_mask].mean().detach().cpu().item())
++
++        return YOPDUpdateResult(metrics=metrics, updated=update_applied)
++
++    def _batch_thresholds(self, entropys: torch.Tensor, disagreement: torch.Tensor, valid: torch.Tensor) -> dict[str, float]:
++        ent = entropys[valid]
++        dis = disagreement[valid]
++        if ent.numel() == 0:
++            return dict(self.thresholds) if self.thresholds else {
++                "entropy_high": 0.0,
++                "entropy_low": 0.0,
++                "disagreement_high": 0.0,
++            }
++        return {
++            "entropy_high": float(torch.quantile(ent.float(), 0.70).detach().cpu().item()),
++            "entropy_low": float(torch.quantile(ent.float(), 0.40).detach().cpu().item()),
++            "disagreement_high": float(torch.quantile(dis.float(), 0.75).detach().cpu().item()),
++        }
++
++    def _update_thresholds(self, batch_thresholds: dict[str, float]) -> None:
++        if not self.thresholds:
++            self.thresholds = dict(batch_thresholds)
++            return
++        for key, value in batch_thresholds.items():
++            self.thresholds[key] = self.threshold_ema * self.thresholds[key] + (1.0 - self.threshold_ema) * value
++
++    def _temperature_credit(
++        self,
++        old_log_probs: torch.Tensor,
++        responses: torch.Tensor,
++        student_top_k_ids: torch.Tensor,
++        student_top_k_log_probs: torch.Tensor,
++        weights: torch.Tensor,
++        valid: torch.Tensor,
++    ) -> torch.Tensor:
++        temp_values = torch.tensor(self.temperatures, device=old_log_probs.device, dtype=old_log_probs.dtype)
++        generated_in_topk = (student_top_k_ids == responses.unsqueeze(-1)).any(dim=-1)
++        generated_logp = old_log_probs.masked_fill(generated_in_topk, -math.inf).unsqueeze(-1)
++        support_logp = torch.cat([student_top_k_log_probs, generated_logp], dim=-1)
++
++        likelihoods = []
++        denom_weights = (weights * valid.float()).sum(dim=-1).clamp_min(1e-6)
++        for temp in temp_values:
++            support = support_logp / temp
++            denom = torch.logsumexp(support, dim=-1)
++            logp_t = old_log_probs / temp - denom
++            weighted = (weights * logp_t * valid.float()).sum(dim=-1) / denom_weights
++            likelihoods.append(weighted)
++        likelihoods = torch.stack(likelihoods, dim=-1)
++        credit_temp = max(self.credit_temperature, 1e-6)
++        scores = likelihoods / credit_temp
++        if self.credit_normalizer == "sparsemax":
++            return self._sparsemax(scores, dim=-1)
++        if self.credit_normalizer == "softmax":
++            return torch.softmax(scores, dim=-1)
++        raise ValueError(f"Unsupported Y-OPD credit_normalizer: {self.credit_normalizer}")
++
++    @staticmethod
++    def _entropy(probs: torch.Tensor) -> torch.Tensor:
++        probs = probs.clamp_min(1e-8)
++        return -(probs * probs.log()).sum()
++
++    @staticmethod
++    def _sparsemax(scores: torch.Tensor, dim: int = -1) -> torch.Tensor:
++        scores = scores - scores.max(dim=dim, keepdim=True).values
++        sorted_scores = torch.sort(scores, descending=True, dim=dim).values
++        range_shape = [1] * scores.dim()
++        range_shape[dim] = scores.size(dim)
++        support_range = torch.arange(
++            1,
++            scores.size(dim) + 1,
++            device=scores.device,
++            dtype=scores.dtype,
++        ).view(range_shape)
++        cumulative = sorted_scores.cumsum(dim)
++        support = 1 + support_range * sorted_scores > cumulative
++        support_size = support.sum(dim=dim, keepdim=True).clamp_min(1)
++        tau = (cumulative.gather(dim, support_size.long() - 1) - 1) / support_size
++        return torch.clamp(scores - tau, min=0.0)
+diff --git a/verl/verl/workers/config/rollout.py b/verl/verl/workers/config/rollout.py
+index 8cda0a9..1698d72 100644
+--- a/verl/verl/workers/config/rollout.py
++++ b/verl/verl/workers/config/rollout.py
+@@ -143,6 +143,7 @@ class RolloutConfig(BaseConfig):
+     top_k_strategy: str = "only_stu"  # "only_stu", "only_tch", "intersection", or "union"
+     reward_weight_mode: str = "student_p"  # "student_p", "teacher_p", or "none"
+     teacher_temperature: float = 1.0  # Temperature for teacher logits (default 1.0, no scaling)
++    y_opd: dict = field(default_factory=dict)
+ 
+     disable_log_stats: bool = True
+ 
+diff --git a/verl/verl/workers/rollout/vllm_rollout/vllm_rollout_spmd.py b/verl/verl/workers/rollout/vllm_rollout/vllm_rollout_spmd.py
+index 256ae0c..bbbfc54 100644
+--- a/verl/verl/workers/rollout/vllm_rollout/vllm_rollout_spmd.py
++++ b/verl/verl/workers/rollout/vllm_rollout/vllm_rollout_spmd.py
+@@ -27,6 +27,7 @@ When working with Megatron:
+ """
+ 
+ import asyncio
++import copy
+ import getpass
+ import inspect
+ import logging
+@@ -301,6 +302,56 @@ class vLLMRollout(BaseRollout):
+         for key, value in old_sampling_params_args.items():
+             setattr(self.sampling_params, key, value)
+ 
++    def _build_y_opd_sampling_params(self, batch_size: int, policy: dict[str, Any]):
++        temperatures = np.asarray(policy.get("temperatures", []), dtype=np.float32)
++        probs = np.asarray(policy.get("probs", []), dtype=np.float64)
++        if temperatures.size == 0 or probs.size != temperatures.size:
++            raise ValueError(
++                f"Invalid Y-OPD policy snapshot: temperatures={temperatures.tolist()}, probs={probs.tolist()}"
++            )
++        probs = np.clip(probs, 0.0, None)
++        probs_sum = probs.sum()
++        if probs_sum <= 0:
++            probs = np.full_like(probs, 1.0 / probs.size)
++        else:
++            probs = probs / probs_sum
++
++        seed = int(policy.get("seed", 0)) + os.getpid()
++        rng = np.random.default_rng(seed)
++        forced_temperature = policy.get("forced_temperature", None)
++        if forced_temperature is not None:
++            selected_temperatures = np.full(batch_size, float(forced_temperature), dtype=np.float32)
++            forced_temp_id = int(np.abs(temperatures - float(forced_temperature)).argmin())
++            temp_ids = np.full(batch_size, forced_temp_id, dtype=np.int64)
++        else:
++            policy_top_p = float(policy.get("policy_top_p", 1.0))
++            if 0.0 < policy_top_p < 1.0 and not np.allclose(probs, probs[0]):
++                sorted_idx = np.argsort(-probs)
++                sorted_probs = probs[sorted_idx]
++                cutoff = np.searchsorted(np.cumsum(sorted_probs), policy_top_p, side="left") + 1
++                keep_idx = sorted_idx[: max(1, cutoff)]
++                truncated = np.zeros_like(probs)
++                truncated[keep_idx] = probs[keep_idx]
++                probs = truncated / truncated.sum()
++            temp_ids = rng.choice(len(temperatures), size=batch_size, p=probs)
++            selected_temperatures = temperatures[temp_ids]
++        top_p = float(policy.get("top_p", getattr(self.sampling_params, "top_p", 1.0)))
++
++        sampling_params = []
++        for temperature in selected_temperatures:
++            if hasattr(self.sampling_params, "clone"):
++                params = self.sampling_params.clone()
++            else:
++                params = copy.deepcopy(self.sampling_params)
++            params.temperature = float(temperature)
++            params.top_p = top_p
++            params.n = 1
++            if hasattr(params, "best_of"):
++                params.best_of = 1
++            sampling_params.append(params)
++
++        return sampling_params, temp_ids.astype(np.int64), selected_temperatures.astype(np.float32)
++
+     @GPUMemoryLogger(role="vllm rollout spmd", logger=logger)
+     @torch.no_grad()
+     def generate_sequences(self, prompts: DataProto, **kwargs) -> DataProto:
+@@ -365,6 +416,8 @@ class vLLMRollout(BaseRollout):
+ 
+         do_sample = prompts.meta_info.get("do_sample", True)
+         is_validate = prompts.meta_info.get("validate", False)
++        y_opd_policy = prompts.meta_info.get("y_opd_policy", None)
++        y_opd_enabled = bool(y_opd_policy and y_opd_policy.get("enabled", False) and do_sample and not is_validate)
+         if not do_sample:
+             kwargs = {
+                 "best_of": 1,
+@@ -409,11 +462,19 @@ class vLLMRollout(BaseRollout):
+                     LoRARequest(lora_name=f"{lora_int_id}", lora_int_id=lora_int_id, lora_path="/simon-stub-path")
+                 ] * batch_size
+ 
++        y_opd_temp_ids = None
++        y_opd_temperatures = None
+         # users can customize different sampling_params at different run
+         with self.update_sampling_params(**kwargs):
++            sampling_params = self.sampling_params
++            if y_opd_enabled:
++                sampling_params, y_opd_temp_ids, y_opd_temperatures = self._build_y_opd_sampling_params(
++                    batch_size=batch_size,
++                    policy=y_opd_policy,
++                )
+             outputs = self.inference_engine.generate(
+                 prompts=vllm_inputs,  # because we have already convert it to prompt token id
+-                sampling_params=self.sampling_params,
++                sampling_params=sampling_params,
+                 lora_request=lora_requests,
+                 use_tqdm=False,
+             )
+@@ -475,6 +536,9 @@ class vLLMRollout(BaseRollout):
+         if self.config.calculate_log_probs:
+             # we will recompute old log prob with actor
+             batch["rollout_log_probs"] = rollout_log_probs
++        if y_opd_temp_ids is not None:
++            batch["y_opd_temp_id"] = torch.as_tensor(y_opd_temp_ids, dtype=torch.long, device=idx.device)
++            batch["y_opd_temperature"] = torch.as_tensor(y_opd_temperatures, dtype=torch.float32, device=idx.device)
+ 
+         return DataProto(batch=batch, non_tensor_batch=non_tensor_batch)
+ 
